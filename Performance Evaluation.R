@@ -1,6 +1,3 @@
-# Grab The Data for the Asset Returns 
-data(edhec)
-managers1 = edhec["2004::2006"]
 
 # Load Packages 
 library(PerformanceAnalytics)
@@ -12,6 +9,61 @@ library(ROI)
 require(ROI.plugin.quadprog)
 require(ROI.plugin.glpk)
 require("RColorBrewer")
+
+# Set up the data for the Funds and the Indices  
+data(edhec)
+managers1 = edhec["2004::2006"]
+loadPath = "C:\\Users\\Sarah\\Desktop\\R PROJECTS\\sarah\\"
+dev.df = na.omit(read.csv(file=paste(loadPath, "msci eafe.csv", sep=""), 
+                          header=TRUE, stringsAsFactors=FALSE))
+em.df = na.omit(read.csv(file=paste(loadPath, "EEMfrom2003.csv", sep=""), 
+                         header=TRUE, stringsAsFactors=FALSE))
+sg.df = na.omit(read.csv(file=paste(loadPath, "small cap growth 2000.csv", sep=""), 
+                         header=TRUE, stringsAsFactors=FALSE))
+sv.df = na.omit(read.csv(file=paste(loadPath, "small cap value 2000.csv", sep=""), 
+                         header=TRUE, stringsAsFactors=FALSE))
+lg.df =na.omit( read.csv(file=paste(loadPath, "russell 1000 growth from march 2000.csv", sep=""), 
+                         header=TRUE, stringsAsFactors=FALSE))
+lv.df = na.omit(read.csv(file=paste(loadPath, "russell 1000 value from march 2000.csv", sep=""), 
+                         header=TRUE, stringsAsFactors=FALSE))
+# to produce zoo objects
+rownames(lg.df) = lg.df$Date
+rownames(lv.df) = lv.df$Date
+rownames(sv.df) = sv.df$Date
+rownames(sg.df) = sg.df$Date
+rownames(dev.df) = dev.df$Date
+rownames(em.df) = em.df$Date
+
+
+
+em.df = em.df[-37, "Adj.Close", drop=FALSE]
+
+dev.df = dev.df[, "Adj.Close", drop=FALSE]
+sg.df = sg.df[, "Adj.Close", drop=FALSE]
+sv.df = sv.df[, "Adj.Close", drop=FALSE]
+lv.df = lv.df[, "Adj.Close", drop=FALSE]
+lg.df = lg.df[, "Adj.Close", drop=FALSE]
+
+dates.em = as.Date(rownames(em.df), format="%m/%d/%Y")
+dates.sg = as.Date(rownames(sg.df), format="%m/%d/%Y")
+dates.dev = as.Date(rownames(dev.df), format="%m/%d/%Y")
+dates.sv = as.Date(rownames(sv.df), format="%m/%d/%Y")
+dates.lg = as.Date(rownames(lg.df), format="%m/%d/%Y")
+dates.lv = as.Date(rownames(lv.df), format="%m/%d/%Y")
+
+
+Styles=cbind(dev.df,sg.df,sv.df,lv.df,lg.df)
+colnames(Styles)=c("Ex-US","Small Growth","Small Value","Large Value","Large Growth")
+Style=na.omit(CalculateReturns(xts(Styles, order.by=dates.lg)))
+em=na.omit(CalculateReturns(xts(em.df,order.by=dates.em)))
+colnames(em)="Emerging"
+Managerz=xts(managers1,order.by=dates.em[-1])
+
+#Append the index Values             
+Managers=na.omit(merge(Managerz["2003::2006"],Style["2003::2006"],em["2003::2006"]))
+
+
+
 # Create Optimal Portfolio Weights for the analysis period, to be then used as hypothetical
 # portfolio
 # Plot Returns of Assets
@@ -68,13 +120,13 @@ par(cex=.8)
 
 
 # Extract the Optimal Weights 
-weights = weights =as.matrix(extractWeights(opt2)[1,])
+weights = as.matrix(extractWeights(opt2)[1,])
 rownames(weights)="2004-01-31"
 
 # Calculate Returns for the Hypothetical Portfolio (HP)
 
 HP=Return.portfolio(R=managers1,weights=weights,geometric=TRUE,rebalance_on="quarters",value=1,verbose=FALSE)
-
+colnames(HP)="Portfolio"
 
 #Setting the Portfolio Benchmark to be the the SP 500 TR 
 sp500=(managers["2004::2006",8])
@@ -102,20 +154,14 @@ Return.annualized(HP,scale=12)
 charts.PerformanceSummary(HAM,Rf=0.001,main="Performance Summary", methods = "ModifiedES",legend.loc="topleft")
 Return.cumulative(HP["2004"])
 chart.CumReturns(HAM,legend.loc="left",main="Cumulative Return")
-chart.RollingPerformance(HAM, width = 6,FUN = "Return.annualized",
-                         ylim = NULL, main = "Rolling Return" , fill = NA)
-chart.RelativePerformance(HP,sp500,main = "Relative Performance",
+chart.RollingPerformance(HAM, width = 6,FUN = "Return.annualized", legend.loc="topleft",
+                         ylim = NULL, main = "6-months Rolling Return" , fill = NA)
+chart.RelativePerformance(HP,sp500,main = "Relative Performance",legend.loc="topleft",
                           xaxis = TRUE, colorset = (1:12))
 mean(Return.relative(HP,sp500))
-data(managers)
 
 
-#Chartng Rolling Standard Deviation, Rolling Mean, and Rolling Sharpe Ratios 
-charts.RollingPerformance(managers[,1:8],
-                          Rf=managers[,10,drop=FALSE],
-                          colorset=tim8equal,
-                          main="Rolling 12-Month Performance",
-                          legend.loc="topleft")
+
 
 #OUT AND UNDERPERFORMANCE 
 
@@ -128,23 +174,67 @@ a=UpsideFrequency(HAM,MAR=0.008)
 b=DownsideFrequency(HAM,MAR=0.008)
 
 c=rbind(a,b)
+c
 
-# chart.Scatter(c )
+#
 
-chart.CaptureRatios(HP,sp500, main = "Capture Ratio", add.names = TRUE,
+chart.CaptureRatioss(HP,sp500, main = "Capture Ratio", add.names = TRUE,
                     xlab = "Downside Capture", ylab = "Upside Capture",cex.legend = 1, cex.axis = 0.8, cex.main = 1, cex.lab = 1,
                     element.color = "darkgray", benchmark.color = "darkgray")
-chart.Drawdown(HP)
+chart.Drawdown(HAM,legend.loc="topleft")
 
 
 #  RISK ANALYSIS
-par(mfrow=c(1,1))
-chart.Histogram(HP,methods = c("add.density", "add.rug","add.risk"),show.outliers=TRUE)
-chart.Histogram(sp500,methods = c("add.density", "add.rug","add.risk"),show.outliers=TRUE)
-chart.BarVaR(HP, width = 0, gap = 3, methods ="ModifiedES",show.greenredbars=TRUE,show.symmetric=TRUE) 
 
+Cash= (managers["2004::3006",10])
+par(mfrow=c(1,1))
 
 StdDev(HP)
+table.SpecificRisk(HP,sp500,Rf = Cash)
+HAM2=cbind(HAM,Style["2004::2006"])
+head(HAM2)
+#Chartng Rolling Standard Deviation, Rolling Mean, and Rolling Sharpe Ratios 
+
+par(cex=.65)
+charts.RollingPerformance(HAM2[,1:4],width=6,
+                          Rf=Cash,
+                          colorset=tim8equal,
+                          main="Rolling 12-Month Performance",
+                          legend.loc="bottomleft", box.col=NULL)
+
+
+# legend("topleft", legend=colnames(HAM2),box.col=NULL,text.width=3,inset=-0.069, pt.cex=1,fill=tim8equal, bty="n", cex=0.5)
+par(cex=.8)
+
+MeanAbsoluteDeviation(HP) 
+SharpeRatio(HP,Rf=Cash,FUN = "StdDev" )
+DrawdownDeviation(HP)
+DownsideDeviation(HP,MAR=sp500)
+InformationRatio(HP,sp500,12)
+SortinoRatio(HP,sp500)
+chart.TimeSeries(apply.rolling(HAM, width = 6,gap = 2, FUN = "MeanAbsoluteDeviation",main="Rolling 6-months MAD", Rb=Cash))
+chart.RollingPerformance(HAM,width = 6,FUN = "SharpeRatio.annualized",main = "Rolling 6-Month Sharpe Ratio",legend.loc="topleft")
+chart.RollingPerformance(HAM,width = 6,FUN = "StdDev",main = "Rolling 6-months Standard Deviation",legend.loc="topleft")
+chart.RollingPerformance(HAM,width = 6,FUN = "MeanAbsoluteDeviation",main = "Rolling 6-months MAD",legend.loc="topleft")
+chart.RollingPerformance(HP,width = 6,FUN = "TrackingError",main = "Rolling 6-months Tracking Error",Rb=sp500,legend.loc="topleft")
+chart.RollingPerformance(HP,width = 6,FUN = "InformationRatio",main = "Rolling 6-months Information Ratio",Rb=sp500,legend.loc="topleft")
+
+
+
+
+apply.rolling(HP, width = 6,gap = 2, FUN = "StdDev", Rb=Cash)
+apply.rolling(HP, width = 6,gap = 2, FUN = "SortinoRatio", Rb=sp500,Rf=Cash)
+apply.rolling(HP, width = 6,gap = 2, FUN = "TrackingError", Rb=Cash)
+
+TrackingError(HP,sp500,scale = 12)
+TreynorRatio(HP,sp500,Rf = Cash,scale = 12,modified = TRUE)
+MSquared(HP,Rb = sp500,Rf=Cash )
+table.DownsideRisk(HAM,scale = 12,Rf = Cash,MAR=0.0085, digits = 3)
+table.DownsideRiskRatio(HAM,MAR=0.0085,scale = 12,digits = 3)
+
+table.Correlation 
+M2Sortino(Ra =HP,Rb=sp500 )
+maxDrawdown (R = HP)
 
 
 
@@ -152,11 +242,8 @@ StdDev(HP)
 
 
 
+# STYLE ANALYSIS
 
-
-
-
-## STYLE ANALYSIS :
 
 ##
 # estimate multiple factor model using loop b/c of unequal histories for the hedge funds
@@ -237,6 +324,18 @@ r.square.p = as.numeric(var.p.systematic/var.fm.p)
 fm.p = c(alpha.p, beta.p, sqrt(var.fm.p), r.square.p)
 names(fm.p) = c("intercept", index.names, "sd", "r-squared")
 fm.p
+fm=c(beta.p)
+names(fm)=index.names
+
+
+par(oma = c(1, 1, 1, 1))  # Outside margins: b, l, t, r
+par(mar = c(4, 5, 2, 1))  # Sets plot margins
+barplot(fm, horiz  = TRUE,
+        las    = 1,  # Orientation of axis labels
+        col    = brewer.pal(12, "Set3"),
+        border = NA,  # No borders on bars
+        main   = "Style Contributions to the Composite Portfolio",
+        xlab   = "Factor Beta")
 
 # factor model residuals - need to extract over truncated sample
 # will be use later in factor risk budgeting
@@ -247,6 +346,15 @@ for (i in manager.names) {
     fm.resid = fm.resid + w.vec[i]*reg.resid[smpl]
 }
 
+
+
+
+
+-----------------
+    
+    # RISK ANALYSIS AND RISK DECOMPOSITION 
+    
+    
 # VaR and ETL for portfolio
 #
 
@@ -260,8 +368,8 @@ VaR(HP, p=0.99, method="gaussian")
 
 mu.fm.p = crossprod(beta.p, mu.factors)
 sd.fm.p = sqrt(var.fm.p)
-# normalVaR(mu.fm.p, sd.fm.p, tail.prob=0.05)
-# normalVaR(mu.fm.p, sd.fm.p, tail.prob=0.01)
+normalVaR(mu.fm.p, sd.fm.p, tail.prob=0.05)
+normalVaR(mu.fm.p, sd.fm.p, tail.prob=0.01)
 
 # Cornish-Fisher (modified VaR)
 VaR(HP, p=0.95, method="modified")
@@ -273,13 +381,13 @@ VaR(HP, p=0.99, method="historical")
 # Normal ES and Normal FM ES
 ES(HP, p=0.95, method="gaussian")
 ES(HP, p=0.99, method="gaussian")
-# normalES(mu.fm.p, sd.fm.p, tail.prob=0.05)
-# normalES(mu.fm.p, sd.fm.p, tail.prob=0.01)
+normalES(mu.fm.p, sd.fm.p, tail.prob=0.05)
+normalES(mu.fm.p, sd.fm.p, tail.prob=0.01)
 
-# Cornish-Fisher (modified VaR)
+# Cornish-Fisher (modified ES)
 ES(HP, p=0.95, method="modified")
 ES(HP, p=0.99, method="modified")
-# Historical VaR
+# Historical ES
 ES(HP, p=0.95, method="historical")
 ES(HP, p=0.99, method="historical")
 
@@ -290,7 +398,7 @@ ES(HP, p=0.99, method="historical")
 
 #
 # risk factor contribution to standard deviation
-
+par(mfrow=c(1,1))
 # Example: factor SD decomposition for Global.Macro
 factor.sd.decomp.Global.Macro = factorModelFactorSdDecomposition(Betas["Global.Macro",],
                                                          cov.factors, ResidVars["Global.Macro"])
@@ -304,7 +412,7 @@ for (i in manager.names) {
                                                                   cov.factors, ResidVars[i])
 }
 # add portfolio factor SD decomposition to list
-factor.sd.decomp.list[["PORT"]] = factorModelFactorSdDecomposition(beta.p,
+factor.sd.decomp.list[["portfolio"]] = factorModelFactorSdDecomposition(beta.p,
                                                                    cov.factors, var.p.resid)
 names(factor.sd.decomp.list)
 # 
@@ -314,9 +422,20 @@ getCSD = function(x) {
 }
 cr.sd = sapply(factor.sd.decomp.list, getCSD)
 rownames(cr.sd) = c(index.names, "residual")
+
+par(oma = c(1, 1, 1, 1))  # Outside margins: b, l, t, r
+par(mar = c(4, 5, 2, 1))  # Sets plot margins
 barplot(cr.sd, main="Factor Contributions to SD",
-        legend.text=T, args.legend=list(x="topleft"),
+        horiz  = TRUE,
+#         legend=NULL,
+        cex.names=0.5,
+        las    = 1,
+#         names.arg=c("CA","CTA","DS","EM","EN","Event","FIA","GM","LSE","MA","RV","SS","FoF"),
+        xlab="Percent Contribution",
+        legend=T, 
         col=brewer.pal(12, "Set3"))
+        
+
 
 # #
 # risk factor contribution to ETL
@@ -335,18 +454,18 @@ factor.es.decomp.Global.Macro
 factor.es.decomp.list = list()
 for (i in manager.names) {
     # check for missing values in fund data
-    idx = which(!is.na(Managers.df[,i]))
-    tmpData = cbind(Managers.df[idx,i], Managers.df[idx,index.names],
+    idx = which(!is.na(Managerz[,i]))
+    tmpData = cbind(Managerz[idx,i], Managerz[idx,index.names],
                     residuals(reg.list[[i]])/sqrt(ResidVars[i]))
     colnames(tmpData)[c(1,5)] = c(manager.names[i], "residual")
     factor.es.decomp.list[[i]] = factorModelFactorEsDecomposition(tmpData, Betas[i,],
                                                                   ResidVars[i], tail.prob=0.05)
 }
 # add portfolo retsults - need factor model residuals
-tmpData = cbind(HP, Managers.df[rownames(HP),index.names],
+tmpData = cbind(HP,Managerz[rownames(HP),index.names],
                 fm.resid/sqrt(as.numeric(var.p.resid)))
-colnames(tmpData)[c(1,5)] = c("PORT", "residual")
-factor.es.decomp.list[["PORT"]] = factorModelFactorEsDecomposition(tmpData, beta.p,
+colnames(tmpData)[c(1,8)] = c("portfolio", "residual")
+factor.es.decomp.list[["portfolio"]] = factorModelFactorEsDecomposition(tmpData, beta.p,
                                                                    var.p.resid, tail.prob=0.05)
 
 # stacked bar charts of percent contributions to SD
@@ -357,7 +476,13 @@ getCETL = function(x) {
 cr.etl = sapply(factor.es.decomp.list, getCETL)
 rownames(cr.etl) = c(index.names, "residual")
 barplot(cr.etl, main="Factor Contributions to ETL",
-        legend.text=T, args.legend=list(x="topleft"),
+               horiz  = TRUE,
+        #         legend=NULL,
+        cex.names=0.5,
+        las    = 1,
+        #         names.arg=c("CA","CTA","DS","EM","EN","Event","FIA","GM","LSE","MA","RV","SS","FoF"),
+        xlab="Percent Contribution",
+        legend=T, 
         col=brewer.pal(12, "Set3"))
 
 #
@@ -446,6 +571,10 @@ cov.sample = cov(Managers.df[,manager.names],
 
 port.sd.decomp.sample = portfolioSdDecomposition(w.vec, cov.sample)
 names(port.sd.decomp.sample)
+chart.Histogram(HP,methods = c("add.density", "add.rug","add.risk"),show.outliers=TRUE)
+chart.Histogram(sp500,methods = c("add.density", "add.rug","add.risk"),show.outliers=TRUE)
+chart.BarVaR(HP, width = 0, gap = 6, methods ="HistoricalES",show.greenredbars=TRUE) 
+
 port.sd.decomp.sample
 
 # show bar chart
@@ -632,4 +761,12 @@ barplot(port.ES.decomp.fmmc$PCES,
         names.arg=c("CA","CTA","DS","EM","EN","Event","FIA","GM","LSE","MA","RV","SS","FoF"),
         ylab="Percent Contribution", 
         col=brewer.pal(6, "Greens"))
+
+# Conducting Style Analysis 
+
+# add Cash to the asset classes
+
+Styles=cbind(Style["2004::2006",],Cash)
+
+nrow(Styles)
 

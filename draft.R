@@ -64,7 +64,9 @@ Managerz=xts(managers1,order.by=dates.em[-1])
 #Append the index Values             
 Managers=na.omit(merge(Managerz["2003::2006"],Style["2003::2006"],em["2003::2006"]))
 
-
+#
+index.names=c(colnames(Managers[,14:19]))
+manager.names=c(colnames(Managers[,1:13]))
 
 
 # Style Indices
@@ -132,9 +134,7 @@ Managers.df = apply(Managers.df, 2,
 Managers.df = as.data.frame(Managers.df)
 colnames(Managers.df)=colnames(Managers)
 rownames(Managers.df) = as.character(index(Managers))
-#
-index.names=c(colnames(Managers[,14:19]))
-manager.names=c(colnames(Managers[,1:13]))
+
 
 # eliminate spaces in index names which cause problems later if not removed
 #index.names = c("EDHEC.LS.EQ", "SP500.TR", "US.10Y.TR")

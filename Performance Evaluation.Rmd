@@ -1,0 +1,881 @@
+---
+title: "Performance Evaluation"
+author: "Sarah Boctor"
+date: "Wednesday, May 13, 2015"
+output: html_document
+---
+
+```{r,echo=FALSE}
+library(PerformanceAnalytics)
+data(edhec)
+managers1 = edhec["2004::2006"]
+library(ellipse)
+library(tseries)
+require(PortfolioAnalytics)
+library(DEoptim)
+library(ROI)
+require(ROI.plugin.quadprog)
+require(ROI.plugin.glpk)
+require("RColorBrewer")
+
+loadPath = "C:\\Users\\Sarah\\Desktop\\R PROJECTS\\sarah\\"
+dev.df = na.omit(read.csv(file=paste(loadPath, "msci eafe.csv", sep=""), 
+                header=TRUE, stringsAsFactors=FALSE))
+em.df = na.omit(read.csv(file=paste(loadPath, "EEMfrom2003.csv", sep=""), 
+                        header=TRUE, stringsAsFactors=FALSE))
+sg.df = na.omit(read.csv(file=paste(loadPath, "small cap growth 2000.csv", sep=""), 
+                 header=TRUE, stringsAsFactors=FALSE))
+sv.df = na.omit(read.csv(file=paste(loadPath, "small cap value 2000.csv", sep=""), 
+                 header=TRUE, stringsAsFactors=FALSE))
+lg.df =na.omit( read.csv(file=paste(loadPath, "russell 1000 growth from march 2000.csv", sep=""), 
+                 header=TRUE, stringsAsFactors=FALSE))
+lv.df = na.omit(read.csv(file=paste(loadPath, "russell 1000 value from march 2000.csv", sep=""), 
+                 header=TRUE, stringsAsFactors=FALSE))
+# to produce zoo objects
+rownames(lg.df) = lg.df$Date
+rownames(lv.df) = lv.df$Date
+rownames(sv.df) = sv.df$Date
+rownames(sg.df) = sg.df$Date
+rownames(dev.df) = dev.df$Date
+rownames(em.df) = em.df$Date
+
+
+
+em.df = em.df[-37, "Adj.Close", drop=FALSE]
+
+dev.df = dev.df[, "Adj.Close", drop=FALSE]
+sg.df = sg.df[, "Adj.Close", drop=FALSE]
+sv.df = sv.df[, "Adj.Close", drop=FALSE]
+lv.df = lv.df[, "Adj.Close", drop=FALSE]
+lg.df = lg.df[, "Adj.Close", drop=FALSE]
+
+dates.em = as.Date(rownames(em.df), format="%m/%d/%Y")
+dates.sg = as.Date(rownames(sg.df), format="%m/%d/%Y")
+dates.dev = as.Date(rownames(dev.df), format="%m/%d/%Y")
+dates.sv = as.Date(rownames(sv.df), format="%m/%d/%Y")
+dates.lg = as.Date(rownames(lg.df), format="%m/%d/%Y")
+dates.lv = as.Date(rownames(lv.df), format="%m/%d/%Y")
+
+
+Styles=cbind(dev.df,sg.df,sv.df,lv.df,lg.df)
+colnames(Styles)=c("Ex-US","Small Growth","Small Value","Large Value","Large Growth")
+Style=na.omit(CalculateReturns(xts(Styles, order.by=dates.lg)))
+em=na.omit(CalculateReturns(xts(em.df,order.by=dates.em)))
+colnames(em)="Emerging"
+Managerz=xts(managers1,order.by=dates.em[-1])
+
+#Append the index Values             
+Managers=na.omit(merge(Managerz["2003::2006"],Style["2003::2006"],em["2003::2006"]))
+
+#
+index.names=c(colnames(Managers[,14:19]))
+manager.names=c(colnames(Managers[,1:13]))
+
+```
+### Funds used in creating the portfolio 
+change the color palette to get all assets 
+
+```{r}
+par(cex=0.86)
+par(mfrow=c(1,1))
+
+chart.CumReturns(Managers[,1:13], main="Cumulative Returns",
+                 wealth.index=TRUE,col= brewer.pal(13, "Spectral"), legend.loc=NULL)
+par(cex=.65)
+legend("topleft", legend=manager.names,text.width=5.7 , pt.cex=2,inset=0, fill= brewer.pal(13, "Spectral"), bty="n", ncol=2, cex=0.8)
+par(cex=.8)
+
+```
+
+## Create Optimal Portfolio
+- we will assume quarterly rebalancing, and will add a weight limit for most funds of 30% long or short, and for 2 risky funds a lower limit of 5% long/short . Also the portfolio will have a position limit of 10 maximum positive positions, and 2 negative positions. 
+- The Portfolio will satisfy a maximum percent ES(Expected Shortfall) objective of 0.5 and an overall monthly mean return of 0.001
+
+```{r,echo=FALSE}
+# Initialize the portfolio objectve 
+port=portfolio.spec(assets=manager.names)
+
+
+# set a constraint of no more than 2 short positions, and no more than 10 positions overall. 
+port=add.constraint(port,'position_limit',max_pos_short=2,max_pos=10,message="can only have 2 short positons",enabled=TRUE)
+
+#set range Weights for  Assets, weights for any assets to not exceed 30% long/short 
+# and  the short.selling and the CTA Global funds as 5% long/short 
+
+port=add.constraint(port,type="box",max=c(0.3,0.05,rep(0.3,9),0.05,1),min=c(-0.3,-0.05,rep(-0.3,9),-0.05,-1),enabled=TRUE)
+
+# Add a return objective of 0.1% monthly and a maximum Expected Shortfall asset budget of 0.5 
+ 
+
+port=add.objective(port,type="risk_budget",name="ES",
+                   min_prisk=0,max_prisk=0.5, enabled= TRUE)
+
+port=add.objective(port,type="return",name="mean",target=0.001,enabled=TRUE )
+
+# The Optimization Function
+opt2=optimize.portfolio.rebalancing(R=managers1, port, optimize_method="random", rebalance_on="quarters", training_period=10, trace=TRUE, search_size = 5000)
+print(opt2)
+##CHARTS DON'T FIT WELL 
+chart.Weights(opt2, main=" Weights")
+chart.RiskBudget(opt2)
+
+```
+
+## Create an Efficient Frontier and Chart the Weights 
+
+```{r,echo=FALSE}
+# Create an Efficient Froniter and Chart the Weights 
+EF=create.EfficientFrontier(R=managers1,portfolio=port,type= "mean-ES",n.portfolios=25,match.col="ES",search_size=2000)
+
+#Charting Efficient Frontier Weights 
+par(mar=c(9, 5, 5, 3)-1, xpd=TRUE)
+chart.EF.Weights(EF, colorset=bluemono, match.col="ES", cex.lab=0.6,legend.loc=NULL)
+par(cex=.65)
+legend("bottom", legend=colnames(managers1),text.width=4.5 , pt.cex=2,inset=-0.42, fill=bluemono, bty="n", ncol=4, cex=0.8)
+par(cex=.8)
+
+```
+
+#
+index.names=c(colnames(Managers[,14:19]))
+manager.names=c(colnames(Managers[,1:13]))
+
+
+weights=as.numeric(c("0.288" ,             "0" ,                 "-0.22"  ,            "0.0880000000000001",
+ "0.282",              "0.176"  ,            "-0.284"   ,          "0.24"   ,           
+ "0.238" ,             "0"   ,               "0.192"   ,           "0"       ,          
+"0" ))
+names(weights)=c( "Convertible.Arbitrage" , "CTA.Global"  ,           "Distressed.Securities", "Emerging.Markets" ,      "Equity.Market.Neutral" , "Event.Driven" ,         
+"Fixed.Income.Arbitrage", "Global.Macro",          "Long.Short.Equity" ,    
+"Merger.Arbitrage" ,      "Relative.Value" ,        "Short.Selling" ,        
+ "Funds.of.Funds" )
+weights=as.matrix(t(weights))
+rownames(weights)="2004-01-31"
+```
+##The Hypothetical Portfolio Return  and Set the SP500 as its Benchmark 
+# Annualized Return
+
+```{r}
+HP=Return.portfolio(R=managers1,weights=weights,geometric=TRUE,rebalance_on="quarters",value=1,verbose=FALSE)
+colnames(HP)="Portfolio"
+data(managers)
+sp500=(managers["2004::2006",8])
+HAM=merge(HP,sp500)
+
+
+table.AnnualizedReturns(HAM,scale=12,Rf=0.0009,digits=3)
+```
+
+
+# Calendar Returns 
+```{r}
+table.CalendarReturns(HAM,digits=1,as.perc=TRUE)
+
+```
+
+# Trailing Periods Return 
+
+```{r}
+results=table.TrailingPeriods(HAM,periods= c( 6, 12, 18, 24, 30))
+
+require("Hmisc")
+textplot(format.df(results, na.blank=TRUE, numeric.dollar=FALSE,
+                   cdec=rep(3,dim(result)[2])), rmar = 0.01, cmar = 0.5,
+         max.cex=.9, halign = "center", valign = "bottom", row.valign="center",
+         wrap.rownames=15, wrap.colnames=3, mar = c(0,0,3,0)+0.1)
+title(main="Trailing Period Statistics")
+
+```
+
+
+#Rolling Performance 
+
+```{r}
+charts.PerformanceSummary(HAM,Rf=0.001,main="Performance Summary", methods = "ModifiedES",legend.loc="topleft")
+
+
+chart.RollingPerformance(HAM, width = 6,FUN = "Return.annualized", legend.loc="topleft",
+                         ylim = NULL, main = "6-months Rolling Return" , fill = NA)
+```
+
+                         
+# Relative Performance 
+```{r}
+chart.RelativePerformance(HP,sp500,main = "Relative Return",legend.loc="topleft",
+                          xaxis = TRUE)
+                          
+```
+
+                          
+# Outperformance and Underperformance
+
+```{r}
+table.UpDownRatios(HP,sp500,digits=2)
+
+table.ProbOutPerformance(HP,sp500,period_lengths=c(1, 3, 6, 9, 12, 18, 36))
+```
+
+
+#Upside and Downside Frequency
+
+```{r}
+a=UpsideFrequency(HAM,MAR=0.008)
+b=DownsideFrequency(HAM,MAR=0.008)
+
+c=rbind(a,b)
+c
+
+chart.Drawdown(HAM,legend.loc="topleft")
+
+```
+
+
+
+##Risk Analysis
+
+```{r}
+Cash= (managers["2004::3006",10])
+HAM2=cbind(HAM,Style["2004::2006"])
+
+par(cex=.65)
+charts.RollingPerformance(HAM2[,1:4],width=6,
+                          Rf=Cash,
+                          colorset=tim8equal,
+                          main="Rolling 12-Month Performance",
+                          legend.loc="bottomleft", box.col=NULL)
+                          par(cex=.8)
+table.DownsideRisk(HAM,scale = 12,Rf = Cash,MAR=0.0085, digits = 3)
+
+
+chart.RollingPerformance(HAM,width = 6,FUN = "SharpeRatio.annualized",main = "Rolling 6-Month Sharpe Ratio",legend.loc="topleft")
+chart.RollingPerformance(HAM,width = 6,FUN = "StdDev",main = "Rolling 6-months Standard Deviation",legend.loc="topleft")
+chart.RollingPerformance(HAM,width = 6,FUN = "MeanAbsoluteDeviation",main = "Rolling 6-months MAD",legend.loc="topleft")
+chart.RollingPerformance(HP,width = 6,FUN = "TrackingError",main = "Rolling 6-months Tracking Error",Rb=sp500,legend.loc="topleft")
+chart.RollingPerformance(HP,width = 6,FUN = "InformationRatio",main = "Rolling 6-months Information Ratio",Rb=sp500,legend.loc="topleft")
+
+```
+
+
+##Style Analysis 
+- Performing Sharpe Style Analysis on the Hypothetical Composite Portfolio by first conducting the style analysis on the component funds 
+
+
+```{r}
+
+# initialize list object to hold regression objects
+reg.list = list()
+# initialize matrices and vectors to hold estimated betas,
+# residual variances, and R-square values from
+# fitted factor models
+Betas = matrix(0, length(manager.names), length(index.names))
+colnames(Betas) = index.names
+rownames(Betas) = manager.names
+Alphas = ResidVars = R2values = rep(0, length(manager.names))
+names(Alphas) = names(ResidVars) = names(R2values) = manager.names
+
+# loop over all assets and estimate time series regression
+for (i in manager.names) {
+    reg.df = na.omit(Managers.df[, c(i, index.names)])
+    fm.formula = as.formula(paste(i,"~", ".", sep=" "))
+    fm.fit = lm(fm.formula, data=reg.df)
+    fm.summary = summary(fm.fit)
+    reg.list[[i]] = fm.fit
+    Alphas[i] = coef(fm.fit)[1]
+    Betas[i, ] = coef(fm.fit)[-1]
+    ResidVars[i] = fm.summary$sigma^2
+    R2values[i] =  fm.summary$r.squared
+}
+reg.results = cbind(Betas, sqrt(ResidVars), R2values)
+colnames(reg.results)[7] = "ResidSD"
+
+# risk factor sample covariance matrix
+cov.factors = var(Managers.df[, index.names])
+# FM covariance matrix
+cov.fm = Betas%*%cov.factors%*%t(Betas) + diag(ResidVars)
+# FM correlation matrix
+cor.fm = cov2cor(cov.fm)
+# plot correlations using plotcorr() from ellipse package
+rownames(cor.fm) = colnames(cor.fm)
+ord <- order(cor.fm[1,])
+
+# compute mu.fm and sigma.fm for all assets. Set alpha = 0 for mu.fm
+
+mu.factors = colMeans(Managers[, index.names])
+mu.fm = Betas%*%mu.factors
+sigma.fm = sqrt(diag(cov.fm))
+
+# portfolio factor model
+#
+
+# equally weighted portfolio of 6 hedge funds
+w.vec =as.numeric(weights)
+
+# portfolio returns
+r.p = as.matrix(HP)
+
+r.p.zoo = zoo(HP, as.yearmon(rownames(HP)))
+
+
+# portfolio factor model
+alpha.p = as.numeric(crossprod(Alphas,w.vec))
+beta.p = t(Betas)%*%w.vec
+var.p.systematic = t(beta.p)%*%cov.factors%*%beta.p
+var.p.resid = t(w.vec)%*%diag(ResidVars)%*%w.vec
+var.fm.p = var.p.systematic + var.p.resid
+var.fm.p = as.numeric(var.fm.p)
+r.square.p = as.numeric(var.p.systematic/var.fm.p)
+fm.p = c(alpha.p, beta.p, sqrt(var.fm.p), r.square.p)
+names(fm.p) = c("intercept", index.names, "sd", "r-squared")
+
+fm.resid = rep(0, nrow(HP))
+smpl = rownames(HP)
+for (i in manager.names) {
+    reg.resid = residuals(reg.list[[i]])
+    fm.resid = fm.resid + w.vec[i]*reg.resid[smpl]
+}
+
+fm=c(beta.p)
+names(fm)=index.names
+
+par(oma = c(1, 1, 1, 1))  # Outside margins: b, l, t, r
+par(mar = c(4, 5, 2, 1))  # Sets plot margins
+barplot(fm, horiz  = TRUE,
+        las    = 1,  # Orientation of axis labels
+        col    = brewer.pal(12, "Set3"),
+        border = NA,  # No borders on bars
+        main   = "Style Contributions to the Composite Portfolio",
+        xlab   = "Factor Beta")
+
+```
+
+## Factor Risk Composition 
+
+
+
+```{r}
+mu.fm.p = crossprod(beta.p, mu.factors)
+sd.fm.p = sqrt(var.fm.p)
+
+# normalVaR.r
+##
+## Normal VaR functions for portfolio VaR report
+##
+
+normalVaR <- function(mu, sigma, tail.prob = 0.01, invert=FALSE) {
+## compute normal VaR for collection of assets given mean and sd vector
+## inputs:
+## mu         n x 1 vector of expected returns
+## sigma      n x 1 vector of standard deviations
+## tail.prob  scalar tail probability
+## invert     logical. If TRUE report VaR as positive number
+## output:
+## VaR        n x 1 vector of left tail return quantiles
+## References:
+## Jorian (2007) pg 111.
+  mu = as.matrix(mu)
+  sigma = as.matrix(sigma)
+  if ( nrow(mu) != nrow(sigma) )
+    stop("mu and sigma must have same number of elements")
+  if ( tail.prob < 0 || tail.prob > 1)
+    stop("tail.prob must be between 0 and 1")
+  VaR = mu + sigma*qnorm(tail.prob)
+  if (invert) {
+    VaR = -VaR
+  }
+  return(VaR)
+}
+
+# normalES.r
+normalES <- function(mu, sigma, tail.prob = 0.01, invert=FALSE) {
+## compute normal ES for collection of assets given mean and sd vector
+## inputs:
+## mu       n x 1 vector of expected returns
+## sigma    n x 1 vector of standard deviations
+## tail.prob  scalar tail probability
+## invert   logical. If TRUE, return ES as positive number
+## output:
+## ES      n x 1 vector of left tail average returns reported as a positive number
+  mu = as.matrix(mu)
+  sigma = as.matrix(sigma)
+  if ( nrow(mu) != nrow(sigma) )
+    stop("mu and sigma must have same number of elements")
+  if ( tail.prob < 0 || tail.prob > 1)
+    stop("tail.prob must be between 0 and 1")
+  ES = mu - sigma*dnorm(qnorm(tail.prob))/tail.prob
+  if(invert) {
+   ES = -ES
+  }
+  return(ES)
+}
+
+```
+
+
+
+# Portfolio Tail Risk Measures 
+
+# Normal VaR
+
+```{r}
+
+VaR(HP, p=0.95, method="gaussian")
+VaR(HP, p=0.99, method="gaussian")
+```
+
+# Factor-Based Normal VaR 
+```{r}
+normalVaR(mu.fm.p, sd.fm.p, tail.prob=0.05)
+normalVaR(mu.fm.p, sd.fm.p, tail.prob=0.01)
+```
+
+# Cornish-Fisher (modified VaR)
+```{r}
+VaR(HP, p=0.95, method="modified")
+VaR(HP, p=0.99, method="modified")
+```
+
+# Historical VaR
+```{r}
+VaR(HP, p=0.95, method="historical")
+VaR(HP, p=0.99, method="historical")
+```
+
+# Normal ES
+```{r}
+ES(HP, p=0.95, method="gaussian")
+ES(HP, p=0.99, method="gaussian")
+```
+
+# Factor-Based Normal ES 
+```{r}
+normalES(mu.fm.p, sd.fm.p, tail.prob=0.05)
+normalES(mu.fm.p, sd.fm.p, tail.prob=0.01)
+```
+
+# Modified ES
+```{r}
+ES(HP, p=0.95, method="modified")
+ES(HP, p=0.99, method="modified")
+```
+
+
+# Historical ES
+```{r}
+ES(HP, p=0.95, method="historical")
+ES(HP, p=0.99, method="historical")
+```
+
+## Portfolio Risk Decomposition: 
+
+1- Analyzing Risk Factors Contribution to the Risk of the Composite Portfolio 
+
+- in this case, the risk factors I used are the different investment styles. These can be easily replaced with macroeconomic factors, or industry fundamentals, etc.. 
+
+# Risk Factor Contribution to Standard Deviation
+```{r}
+factorModelFactorEsDecomposition <- function(bootData, beta.vec, sig2.e, tail.prob = 0.01,
+                                            method=c("average"),
+                                            VaR.method=c("HS", "CornishFisher")) {
+## Compute factor model factor ES decomposition based on Euler's theorem given historic 
+## or simulated data and factor model parameters.
+## The partial derivative of ES wrt factor beta is computed
+## as the expected factor return given fund return is less than or equal to its VaR
+## VaR is compute either as the sample quantile or as an estimated quantile
+## using the Cornish-Fisher expansion
+## inputs:
+## bootData   B x (k+2) matrix of bootstrap data. First column contains the fund returns,
+##            second through k+1 columns contain factor returns, (k+2)nd column contain residuals
+##            scaled to have variance 1.
+## beta.vec   k x 1 vector of factor betas
+## sig2.e        	scalar, residual variance from factor model
+## tail.prob  scalar tail probability
+## method     character, method for computing marginal ES. Valid choices are
+##            "average" for approximating E[Fj | R<=VaR]
+## VaR.method character, method for computing VaR. Valid choices are "HS" for
+##            historical simulation (empirical quantile); "CornishFisher" for
+##            modified VaR based on Cornish-Fisher quantile estimate. Cornish-Fisher
+##            computation is done with the VaR.CornishFisher in the PerformanceAnalytics
+##            package
+## output:
+## A list with the following components:
+## VaR.fm              scalar, bootstrap VaR value for fund reported as a positive number
+## n.exceed            scalar, number of observations beyond VaR
+## idx.exceed          n.exceed x 1 vector giving index values of exceedences
+## ES.fm               scalar, bootstrap ES value for fund reported as a positive number
+## mcES.fm             k+1 x 1 vector of factor marginal contributions to ES
+## cES.fm              k+1 x 1 vector of factor component contributions to ES
+## pcES.fm             k+1 x 1 vector of factor percent contributions to ES
+## Remarks:
+## The factor model has the form
+## R(t) = beta'F(t) + e(t) = beta.star'F.star(t)
+## where beta.star = (beta, sig.e)' and F.star(t) = (F(t)', z(t))'
+## By Euler's theorem
+## ES.fm = sum(cES.fm) = sum(beta.star*mcES.fm)
+## References:
+## 1. Hallerback (2003), "Decomposing Portfolio Value-at-Risk: A General Analysis",
+##    The Journal of Risk 5/2.
+## 2. Yamai and Yoshiba (2002). "Comparative Analyses of Expected Shortfall and
+##    Value-at-Risk: Their Estimation Error, Decomposition, and Optimization
+##    Bank of Japan.
+## 3. Meucci (2007). "Risk Contributions from Generic User-Defined Factors," Risk.
+  require(PerformanceAnalytics)
+  VaR.method = VaR.method[1]
+  bootData = as.matrix(bootData)
+  ncol.bootData = ncol(bootData)
+  if(is.matrix(beta.vec)) {
+    beta.names = c(rownames(beta.vec), "residual")
+  } else if(is.vector(beta.vec)) {
+    beta.names = c(names(beta.vec), "residual")
+  } else {
+   stop("beta.vec is not an n x 1 matrix or a vector")
+  }  
+#  beta.names = c(names(beta.vec), "residual")
+	beta.star.vec = c(beta.vec, sqrt(sig2.e))
+	names(beta.star.vec) = beta.names
+
+  if (VaR.method == "HS") {
+    VaR.fm = quantile(bootData[, 1], prob=tail.prob)
+    idx = which(bootData[, 1] <= VaR.fm)
+    ES.fm = -mean(bootData[idx, 1])
+  } else {
+    VaR.fm = -VaR.CornishFisher(bootData[, 1], p=(1-tail.prob))
+    idx = which(bootData[, 1] <= pVaR)
+    ES.fm = -mean(bootData[idx, 1])
+  }
+  ##
+  ## compute marginal contribution to ES
+  ##
+  if (method == "average") {
+  ## compute marginal ES as expected value of factor return given fund
+  ## return is less than or equal to VaR
+    mcES.fm = -as.matrix(colMeans(bootData[idx, -1]))
+  } else {
+    stop("invalid method")
+  }
+  
+## compute correction factor so that sum of weighted marginal ES adds to portfolio ES
+#cf = as.numeric( ES.fm / sum(mcES.fm*beta.star.vec) )
+#mcES.fm = cf*mcES.fm
+cES.fm = mcES.fm*beta.star.vec
+pcES.fm = cES.fm/ES.fm
+colnames(mcES.fm) = "MCES"
+colnames(cES.fm) = "CES"
+colnames(pcES.fm) = "PCES"
+ans = list(VaR.fm = -VaR.fm,
+           n.exceed = length(idx),
+           idx.exceed = idx,
+           ES.fm = ES.fm, 
+           mcES.fm = t(mcES.fm), 
+           cES.fm = t(cES.fm),
+           pcES.fm = t(pcES.fm))
+return(ans)
+}
+factorModelFactorSdDecomposition <- function(beta.vec, factor.cov, sig2.e) {
+## Inputs:
+## beta       	   k x 1 vector of factor betas with factor names in the rownames
+## factor.cov		 k x k factor excess return covariance matrix
+## sig2.e			   scalar, residual variance from factor model
+## Output:
+## A list with the following components:
+## sd.fm              scalar, std dev based on factor model
+## mcr.fm             k+1 x 1 vector of factor marginal contributions to risk (sd)
+## cr.fm              k+1 x 1 vector of factor component contributions to risk (sd)
+## pcr.fm             k+1 x 1 vector of factor percent contributions to risk (sd)
+## Remarks:
+## The factor model has the form
+## R(t) = beta'F(t) + e(t) = beta.star'F.star(t)
+## where beta.star = (beta, sig.e)' and F.star(t) = (F(t)', z(t))'
+## By Euler's theorem
+## sd.fm = sum(cr.fm) = sum(beta*mcr.fm)
+  if(is.matrix(beta.vec)) {
+    beta.names = c(rownames(beta.vec), "residual")
+  } else if(is.vector(beta.vec)) {
+    beta.names = c(names(beta.vec), "residual")
+  } else {
+   stop("beta.vec is not a matrix or a vector")
+  }  
+  beta.vec = as.vector(beta.vec)
+	beta.star.vec = c(beta.vec, sqrt(sig2.e))
+	names(beta.star.vec) = beta.names
+	factor.cov = as.matrix(factor.cov)
+	k.star = length(beta.star.vec)
+	k = k.star - 1
+	factor.star.cov = diag(k.star)
+	factor.star.cov[1:k, 1:k] = factor.cov
+	
+## compute factor model sd
+  sd.fm = as.numeric(sqrt(t(beta.star.vec) %*% factor.star.cov %*% beta.star.vec))
+## compute marginal and component contributions to sd
+	mcr.fm = (factor.star.cov %*% beta.star.vec)/sd.fm
+	cr.fm = mcr.fm * beta.star.vec
+	pcr.fm = cr.fm/sd.fm
+	rownames(mcr.fm) <- rownames(cr.fm) <- rownames(pcr.fm) <- beta.names
+	colnames(mcr.fm) = "MCR"
+	colnames(cr.fm) = "CR"
+	colnames(pcr.fm) = "PCR"
+## return results
+	ans = list(sd.fm = sd.fm,
+             mcr.fm = t(mcr.fm),
+             cr.fm = t(cr.fm),
+             pcr.fm = t(pcr.fm))
+	return(ans)
+}
+portfolioEsDecomposition <- function(bootData, w, delta.w = 0.001, tail.prob = 0.01,
+                                     method=c("derivative", "average"),
+                                     VaR.method=c("HS", "CornishFisher")) {
+## Compute portfolio ES decomposition given historical or simulated data and portfolio weights.
+## Marginal ES is computed either as the numerical derivative of ES wrt portfolio weight or
+## as the expected fund return given portfolio return is less than or equal to portfolio VaR
+## VaR is compute either as the sample quantile or as an estimated quantile
+## using the Cornish-Fisher expansion
+## inputs:
+## bootData   B x n matrix of B bootstrap returns on assets in portfolio.
+## w          n x 1 vector of portfolio weights
+## delta.w    scalar, change in portfolio weight for computing numerical derivative
+## tail.prob  scalar tail probability
+## method     character, method for computing marginal ES. Valid choices are
+##            "derivative" for numerical computation of the derivative of portfolio
+##            ES wrt fund portfolio weight; "average" for approximating E[Ri | Rp<=VaR]
+## VaR.method character, method for computing VaR. Valid choices are "HS" for
+##            historical simulation (empirical quantile); "CornishFisher" for
+##            modified VaR based on Cornish-Fisher quantile estimate. Cornish-Fisher
+##            computation is done with the VaR.CornishFisher in the PerformanceAnalytics
+##            package
+## output:
+## pVaR       scalar, portfolio VaR reported as a positive number
+## pES        scalar, portfolio ES reported as a positive number
+## n.exceed   scalar, number of VaR exceedences
+## idx.exceed n.exceed x 1 vector of exceedence indices
+## mES        1 x n matrix of marginal ES values for each fund
+## cES        1 x n matrix of component ES values
+## pcES       1 x n matrix of percent contributions to portfolio ES values
+## References:
+## 1. Hallerback (2003), "Decomposing Portfolio Value-at-Risk: A General Analysis",
+##    The Journal of Risk 5/2.
+## 2. Yamai and Yoshiba (2002). "Comparative Analyses of Expected Shortfall and
+##    Value-at-Risk: Their Estimation Error, Decomposition, and Optimization
+##    Bank of Japan.
+  require(PerformanceAnalytics)
+  method = method[1]
+  VaR.method = VaR.method[1]
+  bootData = as.matrix(bootData)
+  w = as.matrix(w)
+  if ( ncol(bootData) != nrow(w) )
+    stop("Columns of bootData and rows of w do not match")
+  if ( tail.prob < 0 || tail.prob > 1)
+    stop("tail.prob must be between 0 and 1")
+
+  n.w = nrow(w)
+
+  ## portfolio VaR and ES with all assets
+  r.p = bootData %*% w
+  if (VaR.method == "HS") {
+    pVaR = quantile(r.p, prob=tail.prob)
+    idx = which(r.p <= pVaR)
+    pES = -mean(r.p[idx])
+  } else {
+    pVaR = -VaR.CornishFisher(r.p, p=(1-tail.prob))
+    idx = which(r.p <= pVaR)
+    pES = -mean(r.p[idx])
+  }
+  ##
+  ## compute marginal ES
+  ##
+  if (method=="derivative") {
+  ## compute marginal ES as derivative wrt portfolio weight
+    temp.w = w
+    mES = matrix(0, n.w, 1)
+    for (i in 1:n.w) {
+    ## increment weight for asset i by delta.w
+      temp.w[i,1] = w[i,1] + delta.w
+      temp.r.p = bootData %*% temp.w
+      if (VaR.method == "HS") {
+        pVaR.new = quantile(temp.r.p, prob=tail.prob)
+        idx = which(temp.r.p <= pVaR.new)
+        pES.new = -mean(temp.r.p[idx])
+      } else {
+        pVaR.new = -VaR.CornishFisher(temp.r.p, p=(1-tail.prob))
+        idx = which(temp.r.p <= pVaR.new)
+        pES.new = -mean(temp.r.p[idx])
+      }
+      mES[i,1] = (pES.new - pES)/delta.w
+    ## reset weight
+      temp.w = w
+    }
+  } else {
+  ## compute marginal ES as expected value of fund return given portfolio
+  ## return is less than or equal to portfolio VaR
+    if (ncol(bootData) > 1) {
+      mES = -as.matrix(colMeans(bootData[idx,]))
+    } else {
+      mES = -as.matrix(mean(bootData[idx, ]))
+    }
+  }
+## compute correction factor so that sum of weighted marginal ES adds to portfolio VaR
+cf = as.numeric( pES / sum(mES*w) )
+## mES = cf*mES
+
+## compute component and percent ES
+cES = mES * w
+pcES = cES/pES
+rownames(mES) = colnames(bootData)
+colnames(mES) = "MCES"
+colnames(cES) = "CES"
+colnames(pcES) = "PCES"
+
+ans = list(VaR.fm = -pVaR,
+           ES.fm = pES,
+           n.exceed = length(idx),
+           idx.exceed = idx,
+           MCES = t(mES),
+           CES = t(cES),
+           PCES = t(pcES))
+return(ans)
+}
+portfolioSdDecomposition <- function(w.vec, cov.assets) {
+## Inputs:
+## w.vec         n x 1 vector of portfolio weights
+## cov.assets    	 n x n asset covariance matrix
+## Output:
+## A list with the following components:
+## sd.p          scalar, portfolio sd
+## mcsd.p        1 x n vector, marginal contributions to portfolio sd
+## csd.p         1 x n vector, contributions to portfolio sd
+## pcsd.p        1 x n vector, percent contribution to portfolio sd
+	
+ if (any(diag(chol(cov.assets)) == 0))
+    warning("Asset covariance matrix is not positive definite")
+ ## compute portfolio level variance
+ var.p = as.numeric(t(w.vec) %*% cov.assets %*% w.vec)
+ sd.p = sqrt(var.p)
+ ## compute marginal, component and percentage contributions to risk
+ mcsd.p = (cov.assets %*% w.vec)/sd.p
+ csd.p = w.vec*mcsd.p
+ pcsd.p = csd.p/sd.p
+ colnames(mcsd.p) = "MCSD"
+ colnames(csd.p) = "CSD"
+ colnames(pcsd.p) = "PCSD"
+ ## return results
+ ans = list(sd.p=sd.p,
+            mcsd.p=t(mcsd.p),
+            csd.p=t(csd.p),
+            pcsd.p=t(pcsd.p))
+ return(ans)
+}
+
+factor.sd.decomp.list = list()
+for (i in manager.names) {
+    factor.sd.decomp.list[[i]] = factorModelFactorSdDecomposition(Betas[i,],
+                                                                  cov.factors, ResidVars[i])
+}
+
+factor.sd.decomp.list[["portfolio"]] = factorModelFactorSdDecomposition(beta.p,
+                                                                   cov.factors, var.p.resid)
+
+getCSD = function(x) {
+    x$cr.fm
+}
+cr.sd = sapply(factor.sd.decomp.list, getCSD)
+rownames(cr.sd) = c(index.names, "residual")
+par(oma = c(1, 1, 1, 1))  # Outside margins: b, l, t, r
+par(mar = c(4, 5, 2, 1))  # Sets plot margins
+barplot(cr.sd, main="Factor Contributions to SD",
+        horiz  = TRUE,
+#         legend=NULL,
+        cex.names=0.5,
+        las    = 1,
+#         names.arg=c("CA","CTA","DS","EM","EN","Event","FIA","GM","LSE","MA","RV","SS","FoF"),
+        xlab="Percent Contribution",
+        legend=T, 
+        col=brewer.pal(12, "Set3"))
+```
+
+2. Analyzing Fund Contribution to the Risk of the Composite Portfolio 
+
+
+```{r}
+
+# compute with sample covariance matrix (pairwise complete obvs)
+cov.sample = cov(Managers.df[,manager.names],
+                 use="pairwise.complete.obs")
+port.sd.decomp.sample = portfolioSdDecomposition(w.vec, cov.sample)
+
+names=as.vector(manager.names)
+par(cex=0.65)
+par(oma = c(1, 1, 1, 1))  # Outside margins: b, l, t, r
+par(mar = c(4, 5, 2, 1))  # Sets plot margins
+barplot(port.sd.decomp.sample$pcsd.p,
+        main="Fund Percent Contributions to Portfolio SD",
+        horiz  = TRUE,
+#                    axisnames=FALSE,
+                las    = 1,  # Orientation of axis labels,
+cex.names=0.9,
+names.arg=c("CA","CTA","DS","EM","EN","Event","FIA","GM","LSE","MA","RV","SS","FoF"),
+        ylab="Percent Contribution", 
+        col=brewer.pal(6, "Greens"))
+```
+
+
+3. Factor Model Monte Carlo 
+
+- Bootstrapping the individual funds returns, and recalculating the risk contributions of the different styles to the funds, and in return to the composite portfolio, a total of 5000 samples new data sets were produced, each having the same size as the original data. 
+
+```{r}
+# resample from historical factors
+n.boot = 5000
+# set random number sed
+set.seed(123)
+# reshuffled indices with replacement
+bootIdx = sample(nrow(Managers.df),  n.boot, replace=TRUE)
+# resampled factor data
+factorDataBoot.mat = as.matrix(Managers.df[bootIdx, index.names])
+
+# FMMC using normal distribution for residuals and alpha = 0
+returns.boot = matrix(0, n.boot, length(manager.names))
+resid.sim = matrix(0, n.boot, length(manager.names))
+colnames(returns.boot) = colnames(resid.sim) = manager.names
+for (i in manager.names) {
+    returns.fm = factorDataBoot.mat%*%Betas[i, ]
+    resid.sim[, i] = rnorm(n.boot,sd=sqrt(ResidVars[i]))
+    returns.boot[, i] = returns.fm + resid.sim[, i]
+}
+# compute FMMC portfolio returns and factor model residuals
+HP.boot = returns.boot%*%w.vec
+resid.fm.p = resid.sim%*%w.vec
+
+
+factor.es.decomp.list = list()
+for (i in manager.names) {
+    tmpData = cbind(returns.boot[, i], factorDataBoot.mat,
+                    resid.sim[, i]/sqrt(ResidVars[i]))
+    colnames(tmpData)[c(1,5)] = c(manager.names[i], "residual")
+    factor.es.decomp.list[[i]] = factorModelFactorEsDecomposition(tmpData, Betas[i,],
+                                                                  ResidVars[i], tail.prob=0.05)
+}
+# add portfolo retsults - need factor model residuals
+tmpData = cbind(HP.boot, factorDataBoot.mat,
+                resid.fm.p/sqrt(as.numeric(var.p.resid)))
+colnames(tmpData)[c(1,5)] = c("PORT", "residual")
+factor.es.decomp.list[["PORT"]] = factorModelFactorEsDecomposition(tmpData, beta.p,
+                                                                   var.p.resid, tail.prob=0.05)
+
+# stacked bar charts of percent contributions to SD
+getCETL = function(x) {
+    x$cES.fm
+}
+# report as positive number
+cr.etl = sapply(factor.es.decomp.list, getCETL)
+rownames(cr.etl) = c(index.names, "residual")
+barplot(cr.etl, main="Factor Contributions to ETL after Bootstrapping",
+       horiz  = TRUE,
+#         legend=NULL,
+        cex.names=0.5,
+        las    = 1,
+#         names.arg=c("CA","CTA","DS","EM","EN","Event","FIA","GM","LSE","MA","RV","SS","FoF"),
+        xlab="Percent Contribution",
+        legend=T, 
+        col=brewer.pal(12, "Set3"))
+```
+
+
+
